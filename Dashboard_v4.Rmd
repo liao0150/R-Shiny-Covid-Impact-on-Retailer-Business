@@ -1,0 +1,159 @@
+---
+title: "Top 100 Counties in Covid-19 Impact and Cases Growth Trend"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    source: embed
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(plotly)
+```
+
+```{r global, include=FALSE}
+data <- read.csv("main_data.csv")
+```
+
+```{r, include=FALSE}
+# K-means clustering
+kcluster = kmeans(data[,8:9], centers = 4)
+# attach the cluster results
+data <- data %>%
+  mutate(cluster = paste("Group ",kcluster$cluster))
+```
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+The dashboard presents two approaches to cluster/classify counties into groups and the underlying data:
+
+1 K-means clustering results are displayed in the 1st tab; 
+
+2 Another approach is to use flexible thresholds at the magnitude of Covid-19 impact and its growth at the county to do customized classifying, please use the below slider to input the cutoff values and rendered results are in the 2nd tab; 
+
+3 Finally, the referred data and grouping results are in the 3rd tab.
+
+
+-----Flex Thresholds-----
+```{r}
+# selectInput("method", label = "Method: ",
+#             choice = c("K-Means","Flex Thresholds"), selected = "Flex Thresholds")
+sliderInput("impact_contribution", label = "Impact Contribution Cutoff",
+            min=0, max = max(data$impact_contribution), value = c(0,max(data$impact_contribution)))
+sliderInput("cases_growth", label = "Cases growth rate Cutoff",
+            min=0,max = max(data$cases_4wk_growth), value = c(0,max(data$cases_4wk_growth)))
+```
+
+
+Row {.tabset}
+-----------------------------------------------------------------------
+
+### K-means Clustering
+
+```{r}
+fig1 <- plot_ly(data, type="scatter",
+      x=~impact_contribution, y=~cases_4wk_growth, mode="markers",
+      text = ~paste(GeoName), hoverinfo = "text",
+      marker = list(size = 10),
+      color = ~cluster) %>%
+        layout(title= 'Top 100 Counties in Covid Impact and Cases Growth Rate',
+     xaxis =list(title=list(text='%contribution to Covid impact on sales')),
+     yaxis =list(title=list(text='4-week net increase cases growth rate')))
+fig1
+
+```
+
+### Flex Thresholds
+
+```{r}
+# flex_data <- reactive({
+#   data %>% 
+#     mutate(flex_group = case_when(
+#       impact_contribution
+#     ))
+# })
+flex_data <- reactive({data %>%
+  mutate(flex_group = case_when(
+    impact_contribution>=input$impact_contribution[2] & cases_4wk_growth>=input$cases_growth[2] ~ "Group 1",
+    impact_contribution>=input$impact_contribution[2] & cases_4wk_growth<input$cases_growth[2] ~ "Group 2",
+    impact_contribution<input$impact_contribution[2] & cases_4wk_growth>=input$cases_growth[2] ~ "Group 3",
+    impact_contribution<input$impact_contribution[2] & cases_4wk_growth<input$cases_growth[2] ~ "Group 4"
+  ))
+})
+
+renderPlot(ggplot(flex_data(), aes(x=impact_contribution, y=cases_4wk_growth, 
+                      color=flex_group)) +
+  geom_point() +
+  geom_vline(aes(xintercept=input$impact_contribution[2])) +
+  geom_hline(aes(yintercept=input$cases_growth[2])) +
+  xlab('%contribution to Covid impact on sales') +
+  ylab('4-week net increase cases growth rate') +
+  ggtitle('Top 100 Counties in Covid Impact and Cases Growth Rate') +
+    theme_bw()
+)
+```
+
+### Data 
+
+```{r}
+renderTable(
+  display_data <- data %>%
+    mutate(flex_group = case_when(
+    impact_contribution>=input$impact_contribution[2] & cases_4wk_growth>=input$cases_growth[2] ~ "Group 1",
+    impact_contribution>=input$impact_contribution[2] & cases_4wk_growth<input$cases_growth[2] ~ "Group 2",
+    impact_contribution<input$impact_contribution[2] & cases_4wk_growth>=input$cases_growth[2] ~ "Group 3",
+    impact_contribution<input$impact_contribution[2] & cases_4wk_growth<input$cases_growth[2] ~ "Group 4"
+  )) %>%
+  select(c('GeoName','impact_contribution','cases_4wk_growth','cluster','flex_group','GeoFips_n','GDP_2018_n','rank')) %>%
+      mutate(impact_contribution = percent(impact_contribution,accuracy = 0.01),
+           cases_4wk_growth = percent(cases_4wk_growth,accuracy = 0.1)) %>%
+  arrange(cluster,desc(impact_contribution))
+)
+```
+
+
+Row
+-----------------------------------------------------------------------
+
+### Map
+    
+```{r}
+# marker styling
+m <- list(
+  size = ~impact_4wk_normal*40,
+  color = ~cases_4wk_growth,
+  colorscale = 'Reds',
+  # cmin = toRGB("darksalmon"),
+  # cmin = toRGB("firebrick1"),
+  # cmax = rgb(0.8,0,0),
+  symbol = "circle",
+  opacity = 0.8,
+  colorbar = list(title=list(text='4-week net increase cases growth rate',
+                             font=list(size=10),
+                             side="right"),
+                  tickfont=list(size=10)),
+  line = list(width=0)
+)
+# geo styling
+g <- list(
+  scope = 'usa',
+  projection = list(type = 'albers usa'),
+  showland = TRUE,
+  landcolor = toRGB("gray95"),
+  subunitcolor = toRGB("gray85"),
+  countrycolor = toRGB("gray85"),
+  countrywidth = 0.5,
+  subunitwidth = 0.5)
+
+fig <- plot_ly(data, type="scattergeo", lat = ~lat, lon = ~lng, mode="markers",
+               text = ~paste(GeoName, paste("%Impact Contribution: ",percent(impact_contribution,accuracy=0.1)), paste("Cases Growth: ",percent(cases_4wk_growth,accuracy = 0.1)), sep = "<br />"),
+               hoverinfo = "text",
+               marker = m) %>% layout(
+  title = 'Top 100 Counties in Covid Impact and Cases Growth Rate', 
+  geo = g)
+fig
+```
